@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run backend tests in Docker
+        run: make test-backend
+      - name: Build runtime image
+        run: docker build --target runtime -t copy-memory backend
+
+  agent:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build agent
+        run: cd agent && swift build -c release
+      - name: Run agent unit tests
+        run: cd agent && swift test
