@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>copy-memory</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --border: #e3e3e0;
+    --accent: #2f6fde; --accent-soft: #e6eefc; --danger: #c93b32; --pin: #c98a12;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618; --panel: #1f1f22; --text: #ececee; --muted: #9a9aa0; --border: #2f2f33;
+      --accent: #6c9bff; --accent-soft: #23304a; --danger: #ff6b61; --pin: #f0b54a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--border); }
+  .bar { max-width: 900px; margin: 0 auto; padding: 14px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 650; }
+  input[type=search] { flex: 1 1 260px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 14px; }
+  input[type=search]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .filters { display: flex; gap: 4px; }
+  .filters button, .ghost { border: 1px solid var(--border); background: var(--panel); color: var(--muted); padding: 6px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+  .filters button[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  main { max-width: 900px; margin: 0 auto; padding: 12px 16px 40px; }
+  .meta { color: var(--muted); font-size: 12px; margin: 4px 2px 10px; display: flex; justify-content: space-between; gap: 8px; }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  li { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+  li.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .body { flex: 1; min-width: 0; }
+  .preview { white-space: pre-wrap; word-break: break-word; max-height: 4.4em; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .thumb { width: 72px; height: 52px; object-fit: contain; border-radius: 6px; background: var(--bg); flex-shrink: 0; }
+  .info { color: var(--muted); font-size: 11.5px; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .kind { text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .actions { display: flex; gap: 2px; opacity: .55; }
+  li:hover .actions, li.sel .actions { opacity: 1; }
+  .actions button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 6px; border-radius: 6px; font-size: 14px; }
+  .actions button:hover { background: var(--bg); color: var(--text); }
+  .actions .on { color: var(--pin); }
+  .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  kbd { font-family: inherit; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>📋 copy-memory</h1>
+    <input id="q" type="search" placeholder="Geçmişte ara…  ( / )" autocomplete="off" autofocus>
+    <div class="filters" id="filters">
+      <button data-kind="" aria-pressed="true">Tümü</button>
+      <button data-kind="text">Metin</button>
+      <button data-kind="rich">Zengin</button>
+      <button data-kind="image">Görsel</button>
+      <button data-kind="file">Dosya</button>
+      <button data-kind="other">Diğer</button>
+    </div>
+    <button class="ghost" id="clear" title="Sabitlenmemiş tüm öğeleri sil">Temizle</button>
+  </div>
+</header>
+<main>
+  <div class="meta"><span id="count"></span><span><kbd>↑</kbd><kbd>↓</kbd> seç · <kbd>Enter</kbd> kopyala · <kbd>P</kbd> sabitle · <kbd>⌫</kbd> sil</span></div>
+  <ul id="list"></ul>
+  <div class="empty" id="empty" hidden>Henüz bir şey yok. Bir şey kopyala ✨</div>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const state = { q: "", kind: "", items: [], sel: 0, total: 0 };
+const fmtSize = (b) => b < 1024 ? b + " B" : b < 1048576 ? (b / 1024).toFixed(1) + " KB" : (b / 1048576).toFixed(1) + " MB";
+const KIND = { text: "Metin", rich: "Zengin", image: "Görsel", file: "Dosya", other: "Diğer" };
+
+function ago(ts) {
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return "az önce";
+  if (s < 3600) return Math.floor(s / 60) + " dk önce";
+  if (s < 86400) return Math.floor(s / 3600) + " sa önce";
+  return new Date(ts * 1000).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 1400);
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(r.status);
+  return r.status === 204 ? null : r.json();
+}
+
+async function load() {
+  const params = new URLSearchParams({ q: state.q, limit: 200 });
+  if (state.kind) params.set("kind", state.kind);
+  const data = await api("/api/items?" + params);
+  state.items = data.items; state.total = data.total;
+  state.sel = Math.min(state.sel, Math.max(0, state.items.length - 1));
+  render();
+}
+
+function render() {
+  const list = $("#list"); list.replaceChildren();
+  $("#empty").hidden = state.items.length > 0;
+  $("#count").textContent = `${state.total} öğe`;
+  state.items.forEach((it, i) => {
+    const li = document.createElement("li");
+    li.className = i === state.sel ? "sel" : "";
+    if (it.has_thumbnail) {
+      const img = document.createElement("img");
+      img.className = "thumb"; img.loading = "lazy"; img.src = `/api/items/${it.id}/thumbnail`;
+      li.append(img);
+    }
+    const body = document.createElement("div"); body.className = "body";
+    const pre = document.createElement("div"); pre.className = "preview"; pre.textContent = it.preview;
+    const info = document.createElement("div"); info.className = "info";
+    info.innerHTML = `<span class="kind"></span><span></span><span></span><span></span>`;
+    const [k, app, when, size] = info.children;
+    k.textContent = KIND[it.kind] || it.kind;
+    app.textContent = it.source_app_name || "";
+    when.textContent = ago(it.last_used_at) + (it.copy_count > 1 ? ` · ${it.copy_count}×` : "");
+    size.textContent = fmtSize(it.size);
+    body.append(pre, info);
+    const actions = document.createElement("div"); actions.className = "actions";
+    actions.innerHTML = `<button title="Sabitle" class="${it.pinned ? "on" : ""}">${it.pinned ? "★" : "☆"}</button><button title="Sil">✕</button>`;
+    actions.children[0].onclick = (e) => { e.stopPropagation(); togglePin(i); };
+    actions.children[1].onclick = (e) => { e.stopPropagation(); remove(i); };
+    li.append(body, actions);
+    li.onclick = () => { state.sel = i; copy(i); };
+    list.append(li);
+  });
+  list.children[state.sel]?.scrollIntoView({ block: "nearest" });
+}
+
+async function copy(i) {
+  const it = state.items[i]; if (!it) return;
+  try {
+    if (it.kind === "image" && it.has_thumbnail) {
+      const blob = await (await fetch(`/api/items/${it.id}/thumbnail`)).blob();
+      const png = blob.type === "image/png" ? blob : await toPng(blob);
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    } else {
+      await navigator.clipboard.writeText(await fullText(it));
+    }
+    await api(`/api/items/${it.id}/use`, { method: "POST" });
+    toast("Panoya kopyalandı");
+    state.sel = 0; load();
+  } catch (e) { toast("Kopyalanamadı: " + e.message); }
+}
+
+async function fullText(it) {
+  const { items } = await api(`/api/items/${it.id}/payload`);
+  const dec = (b) => new TextDecoder().decode(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
+  const parts = items.map((rep) => rep["public.file-url"] ? decodeURIComponent(new URL(dec(rep["public.file-url"])).pathname)
+    : rep["public.utf8-plain-text"] ? dec(rep["public.utf8-plain-text"]) : null).filter((x) => x != null);
+  return parts.length ? parts.join("\n") : it.preview;
+}
+
+async function toPng(blob) {
+  const bmp = await createImageBitmap(blob);
+  const c = new OffscreenCanvas(bmp.width, bmp.height); c.getContext("2d").drawImage(bmp, 0, 0);
+  return c.convertToBlob({ type: "image/png" });
+}
+
+async function togglePin(i) {
+  const it = state.items[i];
+  await api(`/api/items/${it.id}/pin`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pinned: !it.pinned }) });
+  load();
+}
+
+async function remove(i) {
+  await api(`/api/items/${state.items[i].id}`, { method: "DELETE" });
+  load();
+}
+
+let debounce;
+$("#q").addEventListener("input", (e) => { clearTimeout(debounce); debounce = setTimeout(() => { state.q = e.target.value; state.sel = 0; load(); }, 120); });
+$("#filters").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  for (const x of $("#filters").children) x.setAttribute("aria-pressed", x === b);
+  state.kind = b.dataset.kind; state.sel = 0; load();
+});
+$("#clear").onclick = async () => {
+  if (!confirm("Sabitlenmemiş tüm öğeler silinsin mi?")) return;
+  const { deleted } = await api("/api/items", { method: "DELETE" });
+  toast(`${deleted} öğe silindi`); load();
+};
+document.addEventListener("keydown", (e) => {
+  const inSearch = document.activeElement === $("#q");
+  if (e.key === "/" && !inSearch) { e.preventDefault(); $("#q").focus(); return; }
+  if (e.key === "ArrowDown") { e.preventDefault(); state.sel = Math.min(state.sel + 1, state.items.length - 1); render(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); state.sel = Math.max(state.sel - 1, 0); render(); }
+  else if (e.key === "Enter") { e.preventDefault(); copy(state.sel); }
+  else if (!inSearch && (e.key === "p" || e.key === "P")) togglePin(state.sel);
+  else if (!inSearch && (e.key === "Backspace" || e.key === "Delete")) remove(state.sel);
+  else if (e.key === "Escape") { $("#q").value = ""; state.q = ""; load(); }
+});
+setInterval(() => { if (!document.hidden) load(); }, 3000);
+load();
+</script>
+</body>
+</html>

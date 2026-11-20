@@ -1,0 +1,16 @@
+services:
+  copy-memory:
+    build:
+      context: ./backend
+      target: runtime
+    image: copy-memory:latest
+    container_name: copy-memory
+    restart: unless-stopped
+    # Sadece bu Mac'ten erişilebilir; ağdaki diğer cihazlara açık değil.
+    ports:
+      - "127.0.0.1:${PORT:-5050}:5050"
+    environment:
+      MAX_ITEMS: ${MAX_ITEMS:-1000}
+      MAX_ITEM_BYTES: ${MAX_ITEM_BYTES:-52428800}
+    volumes:
+      - ./data:/data
